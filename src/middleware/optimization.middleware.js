@@ -4,7 +4,7 @@ const rateLimit = require('express-rate-limit');
 const mongoSanitize = require('express-mongo-sanitize');
 
 // Compression middleware
-const compressionMiddleware = compressio({
+const compressionMiddleware = compression({
     level: 6,
     treshold: 1024, // Only compress response > 1KB
     filter: (req, res) => {
