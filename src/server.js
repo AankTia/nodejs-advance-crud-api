@@ -8,9 +8,7 @@ const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/crud-a
 // Database connection
 const connectDB = async () => {
     try {
-        const conn = await mongoose.connect(MONGODB_URI, {
-            useUnifiedTopology: true,
-        });
+        const conn = await mongoose.connect(MONGODB_URI);
 
         logger.info(`MongoDB connected: ${conn.connection.host}`);
     } catch (error) {
