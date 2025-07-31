@@ -58,8 +58,8 @@ app.get('/health', (req, res) => {
 
 // API routes
 app.use('/api/auth', authRoutes);
-app.use('/api/users/', userRoutes);
-app.user('/api/products', productRoutes);
+app.use('/api/users', userRoutes);
+app.use('/api/products', productRoutes);
 
 // 404 handler
 app.all('*', (req, res) => {
