@@ -1,0 +1,38 @@
+version: "3.8"
+
+services:
+  app:
+    build: .
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=development
+      - MOGODB_URI=mongodb://mongo:27071/crud-api
+      - REDIS_HOST=redis
+    volumes:
+      - ./src:/usr/app/src
+      - ./logs:/usr/src/app/logs
+    depends_on:
+      - mongo
+      - redis
+    command: npm run dev
+
+  mongo:
+    image: mongo:5.0
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+    environment:
+      - MONGO_INITDB_DATABASE=crud-api
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+
+volumes:
+  mongo_data:
+  redis_data:
