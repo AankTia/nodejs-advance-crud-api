@@ -10,7 +10,7 @@ const {
     compressionMiddleware,
     securityMiddleware,
     rateLimitMiddleware,
-    mongoSaniizeMiddleware
+    mongoSanitizeMiddleware
 } = require('./middleware/optimization.middleware');
 
 // Import routes
@@ -41,7 +41,7 @@ app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 // MongoDB injection prevention
-app.use(mongoSaniizeMiddleware);
+app.use(mongoSanitizeMiddleware);
 
 // Request logging
 app.use(requestLogger);
