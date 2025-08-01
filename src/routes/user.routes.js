@@ -6,7 +6,7 @@ const { authenticate, authorize } = require('../middleware/auth.middleware');
 const router = express.Router();
 
 // Apply authentication to all routes
-router.user(authenticate);
+router.use(authenticate);
 
 // Profile validation
 const profileValidation = [
