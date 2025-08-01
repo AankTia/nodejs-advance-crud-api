@@ -2,56 +2,6 @@
 
 This comprehensive tutorial covers building a production-ready Node.js CRUD API with advanced features including authentication, validation, error handling, logging, testing, and deployment strategies.
 
-## What Makes This Tutorial Advanced:
-
-**🔐 Production-Ready Security:**
-
-- JWT authentication with refresh tokens
-- Account lockout after failed attempts
-- Rate limiting and CORS protection
-- Input validation and sanitization
-- Helmet security headers
-
-**📊 Database Excellence:**
-
-- Advanced MongoDB schema design
-- Proper indexing strategies
-- Text search capabilities
-- Data relationships and population
-- Audit logging
-
-**⚡ Performance Optimization:**
-
-- Redis caching implementation
-- Query optimization techniques
-- Response compression
-- Database connection pooling
-- Efficient pagination
-
-**🧪 Testing Strategy:**
-
-- Unit tests with Jest
-- Integration tests with Supertest
-- Mocking strategies
-- Test database setup
-- Coverage reporting
-
-**🛠️ DevOps Ready:**
-
-- Docker containerization
-- Docker Compose for development
-- Environment configuration
-- Graceful shutdown handling
-- Health check endpoints
-
-**📝 Code Quality:**
-
-- ESLint and Prettier setup
-- Structured error handling
-- Comprehensive logging with Winston
-- Clean architecture patterns
-- Middleware organization
-
 ## Table of Contents
 1. [Project Setup](#project-setup)
 2. [Database Design & Models](#database-design--models)
@@ -67,8 +17,8 @@ This comprehensive tutorial covers building a production-ready Node.js CRUD API 
 
 ### Initialize Project Structure
 ```bash
-mkdir nodejs-advance-crud-api
-cd nodejs-advance-crud-api
+mkdir advanced-node-crud-api
+cd advanced-node-crud-api
 npm init -y
 
 # Install dependencies
@@ -1660,6 +1610,616 @@ app.use(globalErrorHandler);
 module.exports = app;
 ```
 
+## Route Files Implementation
+
+Here are the missing route files that need to be created:
+
+### Authentication Routes
+```javascript
+// src/routes/auth.routes.js
+const express = require('express');
+const { body } = require('express-validator');
+const authController = require('../controllers/auth.controller');
+const { authenticate } = require('../middleware/auth.middleware');
+const { authRateLimitMiddleware } = require('../middleware/optimization.middleware');
+
+const router = express.Router();
+
+// Registration validation
+const registerValidation = [
+  body('email')
+    .isEmail()
+    .normalizeEmail()
+    .withMessage('Please provide a valid email'),
+  body('password')
+    .isLength({ min: 8 })
+    .withMessage('Password must be at least 8 characters long')
+    .matches(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]/)
+    .withMessage('Password must contain at least one uppercase letter, one lowercase letter, one number and one special character'),
+  body('profile.firstName')
+    .trim()
+    .notEmpty()
+    .withMessage('First name is required'),
+  body('profile.lastName')
+    .trim()
+    .notEmpty()
+    .withMessage('Last name is required')
+];
+
+// Login validation
+const loginValidation = [
+  body('email')
+    .isEmail()
+    .normalizeEmail()
+    .withMessage('Please provide a valid email'),
+  body('password')
+    .notEmpty()
+    .withMessage('Password is required')
+];
+
+// Routes
+router.post('/register', authRateLimitMiddleware, registerValidation, authController.register);
+router.post('/login', authRateLimitMiddleware, loginValidation, authController.login);
+router.post('/refresh', authController.refreshToken);
+router.post('/logout', authenticate, authController.logout);
+router.post('/forgot-password', authRateLimitMiddleware, authController.forgotPassword);
+router.post('/reset-password', authRateLimitMiddleware, authController.resetPassword);
+router.post('/verify-email', authController.verifyEmail);
+
+module.exports = router;
+```
+
+### User Routes
+```javascript
+// src/routes/user.routes.js
+const express = require('express');
+const { body } = require('express-validator');
+const userController = require('../controllers/user.controller');
+const { authenticate, authorize } = require('../middleware/auth.middleware');
+
+const router = express.Router();
+
+// Apply authentication to all routes
+router.use(authenticate);
+
+// Profile validation
+const profileValidation = [
+  body('profile.firstName')
+    .optional()
+    .trim()
+    .notEmpty()
+    .withMessage('First name cannot be empty'),
+  body('profile.lastName')
+    .optional()
+    .trim()
+    .notEmpty()
+    .withMessage('Last name cannot be empty'),
+  body('profile.bio')
+    .optional()
+    .trim()
+    .isLength({ max: 500 })
+    .withMessage('Bio must not exceed 500 characters')
+];
+
+// Routes
+router.get('/profile', userController.getProfile);
+router.put('/profile', profileValidation, userController.updateProfile);
+router.delete('/profile', userController.deleteProfile);
+router.post('/change-password', userController.changePassword);
+
+// Admin only routes
+router.get('/', authorize('admin'), userController.getAllUsers);
+router.get('/:id', authorize('admin'), userController.getUserById);
+router.put('/:id/status', authorize('admin'), userController.updateUserStatus);
+
+module.exports = router;
+```
+
+### Product Routes
+```javascript
+// src/routes/product.routes.js
+const express = require('express');
+const productController = require('../controllers/product.controller');
+const { authenticate, authorize } = require('../middleware/auth.middleware');
+const { 
+  createProductValidator, 
+  updateProductValidator, 
+  getProductsValidator 
+} = require('../validators/product.validator');
+const cacheService = require('../utils/cache');
+
+const router = express.Router();
+
+// Public routes
+router.get('/', getProductsValidator, cacheService.middleware(300), productController.getProducts);
+router.get('/:id', cacheService.middleware(600), productController.getProduct);
+router.get('/slug/:slug', cacheService.middleware(600), productController.getProductBySlug);
+
+// Protected routes (require authentication)
+router.use(authenticate);
+
+router.post('/', createProductValidator, productController.createProduct);
+router.put('/:id', updateProductValidator, productController.updateProduct);
+router.delete('/:id', productController.deleteProduct);
+
+// Review routes
+router.post('/:id/reviews', productController.addReview);
+router.put('/:id/reviews/:reviewId', productController.updateReview);
+router.delete('/:id/reviews/:reviewId', productController.deleteReview);
+
+// Admin only routes
+router.patch('/:id/status', authorize('admin'), productController.updateProductStatus);
+router.get('/admin/analytics', authorize('admin'), productController.getProductAnalytics);
+
+module.exports = router;
+```
+
+## Controller Files Implementation
+
+### Authentication Controller
+```javascript
+// src/controllers/auth.controller.js
+const { validationResult } = require('express-validator');
+const authService = require('../services/auth.service');
+const { AppError } = require('../middleware/error.middleware');
+
+class AuthController {
+  async register(req, res, next) {
+    try {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return res.status(400).json({
+          success: false,
+          message: 'Validation errors',
+          errors: errors.array()
+        });
+      }
+
+      const result = await authService.register(req.body);
+
+      res.status(201).json({
+        success: true,
+        message: 'User registered successfully',
+        ...result
+      });
+    } catch (error) {
+      next(new AppError(error.message, 400));
+    }
+  }
+
+  async login(req, res, next) {
+    try {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return res.status(400).json({
+          success: false,
+          message: 'Validation errors',
+          errors: errors.array()
+        });
+      }
+
+      const { email, password } = req.body;
+      const ipAddress = req.ip;
+      const userAgent = req.get('User-Agent');
+
+      const result = await authService.login(email, password, ipAddress, userAgent);
+
+      res.json({
+        success: true,
+        message: 'Login successful',
+        ...result
+      });
+    } catch (error) {
+      next(new AppError(error.message, 401));
+    }
+  }
+
+  async refreshToken(req, res, next) {
+    try {
+      const { refreshToken } = req.body;
+
+      if (!refreshToken) {
+        return next(new AppError('Refresh token is required', 400));
+      }
+
+      const result = await authService.refreshToken(refreshToken);
+
+      res.json({
+        success: true,
+        message: 'Token refreshed successfully',
+        ...result
+      });
+    } catch (error) {
+      next(new AppError(error.message, 401));
+    }
+  }
+
+  async logout(req, res, next) {
+    try {
+      const token = req.headers.authorization?.split(' ')[1];
+      
+      await authService.logout(token);
+
+      res.json({
+        success: true,
+        message: 'Logged out successfully'
+      });
+    } catch (error) {
+      next(new AppError(error.message, 500));
+    }
+  }
+
+  async forgotPassword(req, res, next) {
+    try {
+      const { email } = req.body;
+      
+      if (!email) {
+        return next(new AppError('Email is required', 400));
+      }
+
+      await authService.forgotPassword(email);
+
+      res.json({
+        success: true,
+        message: 'Password reset email sent'
+      });
+    } catch (error) {
+      next(new AppError(error.message, 400));
+    }
+  }
+
+  async resetPassword(req, res, next) {
+    try {
+      const { token, password } = req.body;
+
+      if (!token || !password) {
+        return next(new AppError('Token and password are required', 400));
+      }
+
+      await authService.resetPassword(token, password);
+
+      res.json({
+        success: true,
+        message: 'Password reset successful'
+      });
+    } catch (error) {
+      next(new AppError(error.message, 400));
+    }
+  }
+
+  async verifyEmail(req, res, next) {
+    try {
+      const { token } = req.body;
+
+      if (!token) {
+        return next(new AppError('Verification token is required', 400));
+      }
+
+      await authService.verifyEmail(token);
+
+      res.json({
+        success: true,
+        message: 'Email verified successfully'
+      });
+    } catch (error) {
+      next(new AppError(error.message, 400));
+    }
+  }
+}
+
+module.exports = new AuthController();
+```
+
+### User Controller
+```javascript
+// src/controllers/user.controller.js
+const { validationResult } = require('express-validator');
+const userService = require('../services/user.service');
+const { AppError } = require('../middleware/error.middleware');
+
+class UserController {
+  async getProfile(req, res, next) {
+    try {
+      const user = await userService.getUserById(req.user._id);
+
+      res.json({
+        success: true,
+        data: user
+      });
+    } catch (error) {
+      next(new AppError(error.message, 404));
+    }
+  }
+
+  async updateProfile(req, res, next) {
+    try {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return res.status(400).json({
+          success: false,
+          message: 'Validation errors',
+          errors: errors.array()
+        });
+      }
+
+      const updatedUser = await userService.updateUser(req.user._id, req.body);
+
+      res.json({
+        success: true,
+        message: 'Profile updated successfully',
+        data: updatedUser
+      });
+    } catch (error) {
+      next(new AppError(error.message, 400));
+    }
+  }
+
+  async changePassword(req, res, next) {
+    try {
+      const { currentPassword, newPassword } = req.body;
+
+      if (!currentPassword || !newPassword) {
+        return next(new AppError('Current password and new password are required', 400));
+      }
+
+      await userService.changePassword(req.user._id, currentPassword, newPassword);
+
+      res.json({
+        success: true,
+        message: 'Password changed successfully'
+      });
+    } catch (error) {
+      next(new AppError(error.message, 400));
+    }
+  }
+
+  async deleteProfile(req, res, next) {
+    try {
+      await userService.deleteUser(req.user._id);
+
+      res.json({
+        success: true,
+        message: 'Profile deleted successfully'
+      });
+    } catch (error) {
+      next(new AppError(error.message, 500));
+    }
+  }
+
+  async getAllUsers(req, res, next) {
+    try {
+      const {
+        page = 1,
+        limit = 10,
+        search,
+        status,
+        role
+      } = req.query;
+
+      const users = await userService.getAllUsers({
+        page: parseInt(page),
+        limit: parseInt(limit),
+        search,
+        status,
+        role
+      });
+
+      res.json({
+        success: true,
+        data: users.docs,
+        pagination: {
+          currentPage: users.page,
+          totalPages: users.totalPages,
+          totalItems: users.totalDocs,
+          itemsPerPage: users.limit
+        }
+      });
+    } catch (error) {
+      next(new AppError(error.message, 500));
+    }
+  }
+
+  async getUserById(req, res, next) {
+    try {
+      const user = await userService.getUserById(req.params.id);
+
+      res.json({
+        success: true,
+        data: user
+      });
+    } catch (error) {
+      next(new AppError(error.message, 404));
+    }
+  }
+
+  async updateUserStatus(req, res, next) {
+    try {
+      const { status } = req.body;
+
+      if (!status || !['active', 'inactive', 'suspended'].includes(status)) {
+        return next(new AppError('Valid status is required', 400));
+      }
+
+      const updatedUser = await userService.updateUserStatus(req.params.id, status);
+
+      res.json({
+        success: true,
+        message: 'User status updated successfully',
+        data: updatedUser
+      });
+    } catch (error) {
+      next(new AppError(error.message, 400));
+    }
+  }
+}
+
+module.exports = new UserController();
+```
+
+## Service Files Implementation
+
+### User Service
+```javascript
+// src/services/user.service.js
+const User = require('../models/User');
+const bcrypt = require('bcryptjs');
+
+class UserService {
+  async getUserById(userId) {
+    const user = await User.findById(userId).select('-password');
+    
+    if (!user) {
+      throw new Error('User not found');
+    }
+    
+    return user;
+  }
+
+  async updateUser(userId, updateData) {
+    const user = await User.findByIdAndUpdate(
+      userId,
+      { $set: updateData },
+      { new: true, runValidators: true }
+    ).select('-password');
+
+    if (!user) {
+      throw new Error('User not found');
+    }
+
+    return user;
+  }
+
+  async changePassword(userId, currentPassword, newPassword) {
+    const user = await User.findById(userId).select('+password');
+    
+    if (!user) {
+      throw new Error('User not found');
+    }
+
+    const isCurrentPasswordValid = await user.comparePassword(currentPassword);
+    
+    if (!isCurrentPasswordValid) {
+      throw new Error('Current password is incorrect');
+    }
+
+    user.password = newPassword;
+    await user.save();
+
+    return { message: 'Password changed successfully' };
+  }
+
+  async deleteUser(userId) {
+    const user = await User.findByIdAndDelete(userId);
+    
+    if (!user) {
+      throw new Error('User not found');
+    }
+
+    return { message: 'User deleted successfully' };
+  }
+
+  async getAllUsers(options) {
+    const { page, limit, search, status, role } = options;
+    
+    const filter = {};
+    
+    if (search) {
+      filter.$text = { $search: search };
+    }
+    
+    if (status) {
+      filter.status = status;
+    }
+    
+    if (role) {
+      filter.role = role;
+    }
+
+    const paginateOptions = {
+      page,
+      limit,
+      select: '-password',
+      sort: { createdAt: -1 }
+    };
+
+    return await User.paginate(filter, paginateOptions);
+  }
+
+  async updateUserStatus(userId, status) {
+    const user = await User.findByIdAndUpdate(
+      userId,
+      { status },
+      { new: true, runValidators: true }
+    ).select('-password');
+
+    if (!user) {
+      throw new Error('User not found');
+    }
+
+    return user;
+  }
+}
+
+module.exports = new UserService();
+```
+
+### Product Service
+```javascript
+// src/services/product.service.js
+const Product = require('../models/Product');
+
+class ProductService {
+  async createProduct(productData) {
+    const product = new Product(productData);
+    await product.save();
+    
+    await product.populate('createdBy', 'profile.firstName profile.lastName');
+    
+    return product;
+  }
+
+  async updateProduct(productId, updateData) {
+    const product = await Product.findByIdAndUpdate(
+      productId,
+      { $set: updateData },
+      { new: true, runValidators: true }
+    ).populate('createdBy', 'profile.firstName profile.lastName');
+
+    if (!product) {
+      throw new Error('Product not found');
+    }
+
+    return product;
+  }
+
+  async deleteProduct(productId) {
+    const product = await Product.findByIdAndDelete(productId);
+    
+    if (!product) {
+      throw new Error('Product not found');
+    }
+
+    return { message: 'Product deleted successfully' };
+  }
+
+  async updateProductStatus(productId, status) {
+    const product = await Product.findByIdAndUpdate(
+      productId,
+      { status },
+      { new: true, runValidators: true }
+    );
+
+    if (!product) {
+      throw new Error('Product not found');
+    }
+
+    return product;
+  }
+}
+
+module.exports = new ProductService();
+```
+
 ### Server Entry Point
 ```javascript
 // src/server.js
@@ -1814,7 +2374,7 @@ volumes:
 ### Package.json Scripts
 ```json
 {
-  "name": "nodejs-advance-crud-api",
+  "name": "advanced-node-crud-api",
   "version": "1.0.0",
   "scripts": {
     "start": "node src/server.js",
