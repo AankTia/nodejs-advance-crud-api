@@ -742,11 +742,49 @@ class ProductController {
     }
   }
 
+  // GET /api/products/slug/:slug
+  async getProductBySlug(req, res) {
+    try {
+      const product = await Product.findOne({ 
+        slug: req.params.slug,
+        status: 'active' 
+      })
+        .populate('createdBy', 'profile.firstName profile.lastName')
+        .populate('reviews.user', 'profile.firstName profile.lastName');
+
+      if (!product) {
+        return res.status(404).json({
+          success: false,
+          message: 'Product not found'
+        });
+      }
+
+      res.json({
+        success: true,
+        data: product
+      });
+    } catch (error) {
+      res.status(500).json({
+        success: false,
+        message: 'Error fetching product',
+        error: error.message
+      });
+    }
+  }
+
   // POST /api/products/:id/reviews
   async addReview(req, res) {
     try {
       const { rating, comment } = req.body;
       
+      // Validation
+      if (!rating || rating < 1 || rating > 5) {
+        return res.status(400).json({
+          success: false,
+          message: 'Rating must be between 1 and 5'
+        });
+      }
+
       const product = await Product.findById(req.params.id);
       if (!product) {
         return res.status(404).json({
@@ -769,8 +807,8 @@ class ProductController {
 
       product.reviews.push({
         user: req.user._id,
-        rating,
-        comment
+        rating: parseInt(rating),
+        comment: comment?.trim() || ''
       });
 
       product.updateRatings();
@@ -787,6 +825,320 @@ class ProductController {
       res.status(400).json({
         success: false,
         message: error.message
+      });
+    }
+  }
+
+  // PUT /api/products/:id/reviews/:reviewId
+  async updateReview(req, res) {
+    try {
+      const { rating, comment } = req.body;
+      const { id: productId, reviewId } = req.params;
+
+      // Validation
+      if (rating && (rating < 1 || rating > 5)) {
+        return res.status(400).json({
+          success: false,
+          message: 'Rating must be between 1 and 5'
+        });
+      }
+
+      const product = await Product.findById(productId);
+      if (!product) {
+        return res.status(404).json({
+          success: false,
+          message: 'Product not found'
+        });
+      }
+
+      // Find the review
+      const review = product.reviews.id(reviewId);
+      if (!review) {
+        return res.status(404).json({
+          success: false,
+          message: 'Review not found'
+        });
+      }
+
+      // Check if user owns the review
+      if (review.user.toString() !== req.user._id.toString()) {
+        return res.status(403).json({
+          success: false,
+          message: 'Not authorized to update this review'
+        });
+      }
+
+      // Update review fields
+      if (rating) review.rating = parseInt(rating);
+      if (comment !== undefined) review.comment = comment.trim();
+
+      product.updateRatings();
+      await product.save();
+
+      await product.populate('reviews.user', 'profile.firstName profile.lastName');
+
+      res.json({
+        success: true,
+        message: 'Review updated successfully',
+        data: review
+      });
+    } catch (error) {
+      res.status(400).json({
+        success: false,
+        message: error.message
+      });
+    }
+  }
+
+  // DELETE /api/products/:id/reviews/:reviewId
+  async deleteReview(req, res) {
+    try {
+      const { id: productId, reviewId } = req.params;
+
+      const product = await Product.findById(productId);
+      if (!product) {
+        return res.status(404).json({
+          success: false,
+          message: 'Product not found'
+        });
+      }
+
+      // Find the review
+      const review = product.reviews.id(reviewId);
+      if (!review) {
+        return res.status(404).json({
+          success: false,
+          message: 'Review not found'
+        });
+      }
+
+      // Check if user owns the review or is admin
+      if (review.user.toString() !== req.user._id.toString() && req.user.role !== 'admin') {
+        return res.status(403).json({
+          success: false,
+          message: 'Not authorized to delete this review'
+        });
+      }
+
+      // Remove the review
+      product.reviews.pull(reviewId);
+      product.updateRatings();
+      await product.save();
+
+      res.json({
+        success: true,
+        message: 'Review deleted successfully'
+      });
+    } catch (error) {
+      res.status(500).json({
+        success: false,
+        message: 'Error deleting review',
+        error: error.message
+      });
+    }
+  }
+
+  // PATCH /api/products/:id/status (Admin only)
+  async updateProductStatus(req, res) {
+    try {
+      const { status } = req.body;
+      const validStatuses = ['draft', 'active', 'inactive', 'archived'];
+
+      if (!status || !validStatuses.includes(status)) {
+        return res.status(400).json({
+          success: false,
+          message: `Status must be one of: ${validStatuses.join(', ')}`
+        });
+      }
+
+      const product = await Product.findByIdAndUpdate(
+        req.params.id,
+        { status },
+        { new: true, runValidators: true }
+      ).populate('createdBy', 'profile.firstName profile.lastName');
+
+      if (!product) {
+        return res.status(404).json({
+          success: false,
+          message: 'Product not found'
+        });
+      }
+
+      res.json({
+        success: true,
+        message: 'Product status updated successfully',
+        data: product
+      });
+    } catch (error) {
+      res.status(400).json({
+        success: false,
+        message: error.message
+      });
+    }
+  }
+
+  // GET /api/products/admin/analytics (Admin only)
+  async getProductAnalytics(req, res) {
+    try {
+      const { timeframe = '30d' } = req.query;
+      
+      // Calculate date range based on timeframe
+      const now = new Date();
+      let startDate;
+      
+      switch (timeframe) {
+        case '7d':
+          startDate = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+          break;
+        case '30d':
+          startDate = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+          break;
+        case '90d':
+          startDate = new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000);
+          break;
+        case '1y':
+          startDate = new Date(now.getTime() - 365 * 24 * 60 * 60 * 1000);
+          break;
+        default:
+          startDate = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+      }
+
+      // Run multiple aggregations in parallel
+      const [
+        totalStats,
+        categoryStats,
+        statusStats,
+        topRatedProducts,
+        recentProducts,
+        priceRangeStats
+      ] = await Promise.all([
+        // Total statistics
+        Product.aggregate([
+          {
+            $group: {
+              _id: null,
+              totalProducts: { $sum: 1 },
+              totalInventory: { $sum: '$inventory.quantity' },
+              averagePrice: { $avg: '$price' },
+              totalReviews: { $sum: { $size: '$reviews' } },
+              averageRating: { $avg: '$ratings.average' }
+            }
+          }
+        ]),
+
+        // Products by category
+        Product.aggregate([
+          {
+            $group: {
+              _id: '$category',
+              count: { $sum: 1 },
+              averagePrice: { $avg: '$price' },
+              totalInventory: { $sum: '$inventory.quantity' }
+            }
+          },
+          { $sort: { count: -1 } }
+        ]),
+
+        // Products by status
+        Product.aggregate([
+          {
+            $group: {
+              _id: '$status',
+              count: { $sum: 1 }
+            }
+          }
+        ]),
+
+        // Top rated products
+        Product.find({ 'ratings.count': { $gte: 1 } })
+          .sort({ 'ratings.average': -1, 'ratings.count': -1 })
+          .limit(10)
+          .select('name slug ratings price category')
+          .populate('createdBy', 'profile.firstName profile.lastName'),
+
+        // Recent products
+        Product.find({ createdAt: { $gte: startDate } })
+          .sort({ createdAt: -1 })
+          .limit(10)
+          .select('name slug createdAt status category price')
+          .populate('createdBy', 'profile.firstName profile.lastName'),
+
+        // Price range distribution
+        Product.aggregate([
+          {
+            $bucket: {
+              groupBy: '$price',
+              boundaries: [0, 25, 50, 100, 200, 500, 1000, Infinity],
+              default: 'Other',
+              output: {
+                count: { $sum: 1 },
+                averageRating: { $avg: '$ratings.average' }
+              }
+            }
+          }
+        ])
+      ]);
+
+      // Format the analytics data
+      const analytics = {
+        overview: {
+          totalProducts: totalStats[0]?.totalProducts || 0,
+          totalInventory: totalStats[0]?.totalInventory || 0,
+          averagePrice: Math.round((totalStats[0]?.averagePrice || 0) * 100) / 100,
+          totalReviews: totalStats[0]?.totalReviews || 0,
+          averageRating: Math.round((totalStats[0]?.averageRating || 0) * 100) / 100
+        },
+        categoryBreakdown: categoryStats.map(cat => ({
+          category: cat._id,
+          count: cat.count,
+          averagePrice: Math.round(cat.averagePrice * 100) / 100,
+          totalInventory: cat.totalInventory,
+          percentage: Math.round((cat.count / (totalStats[0]?.totalProducts || 1)) * 100)
+        })),
+        statusBreakdown: statusStats,
+        topRatedProducts: topRatedProducts.map(product => ({
+          id: product._id,
+          name: product.name,
+          slug: product.slug,
+          rating: Math.round(product.ratings.average * 100) / 100,
+          reviewCount: product.ratings.count,
+          price: product.price,
+          category: product.category,
+          createdBy: product.createdBy
+        })),
+        recentProducts: recentProducts.map(product => ({
+          id: product._id,
+          name: product.name,
+          slug: product.slug,
+          createdAt: product.createdAt,
+          status: product.status,
+          category: product.category,
+          price: product.price,
+          createdBy: product.createdBy
+        })),
+        priceDistribution: priceRangeStats.map((range, index) => {
+          const boundaries = [0, 25, 50, 100, 200, 500, 1000];
+          const labels = ['$0-25', '$25-50', '$50-100', '$100-200', '$200-500', '$500-1000', '$1000+'];
+          
+          return {
+            range: labels[index] || 'Other',
+            count: range.count,
+            averageRating: Math.round((range.averageRating || 0) * 100) / 100
+          };
+        }),
+        timeframe,
+        generatedAt: new Date()
+      };
+
+      res.json({
+        success: true,
+        data: analytics
+      });
+    } catch (error) {
+      res.status(500).json({
+        success: false,
+        message: 'Error generating analytics',
+        error: error.message
       });
     }
   }
@@ -859,6 +1211,29 @@ const createProductValidator = [
     .withMessage('Each tag must be between 1 and 50 characters')
 ];
 
+const reviewValidator = [
+  body('rating')
+    .isInt({ min: 1, max: 5 })
+    .withMessage('Rating must be an integer between 1 and 5'),
+  body('comment')
+    .optional()
+    .trim()
+    .isLength({ max: 1000 })
+    .withMessage('Comment must not exceed 1000 characters')
+];
+
+const updateReviewValidator = [
+  body('rating')
+    .optional()
+    .isInt({ min: 1, max: 5 })
+    .withMessage('Rating must be an integer between 1 and 5'),
+  body('comment')
+    .optional()
+    .trim()
+    .isLength({ max: 1000 })
+    .withMessage('Comment must not exceed 1000 characters')
+];
+
 const updateProductValidator = [
   body('name')
     .optional()
@@ -911,7 +1286,9 @@ const getProductsValidator = [
 module.exports = {
   createProductValidator,
   updateProductValidator,
-  getProductsValidator
+  getProductsValidator,
+  reviewValidator,
+  updateReviewValidator
 };
 ```
 
@@ -1724,7 +2101,9 @@ const { authenticate, authorize } = require('../middleware/auth.middleware');
 const { 
   createProductValidator, 
   updateProductValidator, 
-  getProductsValidator 
+  getProductsValidator,
+  reviewValidator,
+  updateReviewValidator
 } = require('../validators/product.validator');
 const cacheService = require('../utils/cache');
 
@@ -1743,8 +2122,8 @@ router.put('/:id', updateProductValidator, productController.updateProduct);
 router.delete('/:id', productController.deleteProduct);
 
 // Review routes
-router.post('/:id/reviews', productController.addReview);
-router.put('/:id/reviews/:reviewId', productController.updateReview);
+router.post('/:id/reviews', reviewValidator, productController.addReview);
+router.put('/:id/reviews/:reviewId', updateReviewValidator, productController.updateReview);
 router.delete('/:id/reviews/:reviewId', productController.deleteReview);
 
 // Admin only routes
