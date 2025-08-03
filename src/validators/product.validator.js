@@ -57,6 +57,29 @@ const createProductValidator = [
         .withMessage('Each tag mus be between 1 and 50 characters')
 ];
 
+const reviewValidator = [
+    body('rating')
+        .isInt({ min: 1, max: 5 })
+        .withMessage('Rating must be an integer between 1 and 5'),
+    body('comment')
+        .optional()
+        .trim()
+        .isLength({ max: 1000 })
+        .withMessage('Comment must not exceed 1000 characters')
+];
+
+const updateReviewValidator = [
+    body('rating')
+        .optional()
+        .isInt({ min: 1, max: 5 })
+        .withMessage('Rating must be an integer between 1 and 5'),
+    body('comment')
+        .optional()
+        .trim()
+        .isLength({ max: 1000 })
+        .withMessage('Comment must not exceed 1000 characters')
+];
+
 const updateProductValidator = [
     body('name')
         .optional()
@@ -110,4 +133,6 @@ module.exports = {
     createProductValidator,
     updateProductValidator,
     getProductsValidator,
+    reviewValidator,
+    updateReviewValidator
 };
