@@ -4,7 +4,7 @@ const { authenticate, authorize } = require('../middleware/auth.middleware');
 const {
     createProductValidator,
     updateProductValidator,
-    getProductValidator,
+    getProductsValidator,
     reviewValidator,
     updateReviewValidator
 } = require('../validators/product.validator');
@@ -13,7 +13,7 @@ const cacheService = require('../utils/cache');
 const router = express.Router();
 
 // Pubolic routes
-router.get('/', getProductValidator, cacheService.middleware(300), productController.getProducts);
+router.get('/', getProductsValidator, cacheService.middleware(300), productController.getProducts);
 router.get('/:id', cacheService.middleware(600), productController.getProduct);
 router.get('/slug/:slug', cacheService.middleware(600), productController.getProductBySlug);
 
