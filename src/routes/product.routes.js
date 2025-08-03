@@ -4,7 +4,9 @@ const { authenticate, authorize } = require('../middleware/auth.middleware');
 const {
     createProductValidator,
     updateProductValidator,
-    getProductValidator
+    getProductValidator,
+    reviewValidator,
+    updateReviewValidator
 } = require('../validators/product.validator');
 const cacheService = require('../utils/cache');
 
@@ -23,8 +25,8 @@ router.put('/:id', updateProductValidator, productController.updateProduct);
 router.delete('/:id', productController.deleteProduct);
 
 // Review routes
-router.post('/:id/reviews', productController.addReview);
-router.put('/:id/reviews/:reviewId', productController.updateReview);
+router.post('/:id/reviews', reviewValidator, productController.addReview);
+router.put('/:id/reviews/:reviewId', updateReviewValidator, productController.updateReview);
 router.delete('/:id/reviews/:reviewId', productController.deleteReview);
 
 // Admin only routes
