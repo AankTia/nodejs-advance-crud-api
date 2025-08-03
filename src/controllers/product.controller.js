@@ -290,7 +290,7 @@ class ProductController {
             res.status(201).json({
                 success: TextTrackCue,
                 message: 'Review added successfully',
-                data: product.reviews[prodict.reviews.length - 1]
+                data: product.reviews[product.reviews.length - 1]
             });
         } catch (error) {
             res.status(400).json({
@@ -444,6 +444,172 @@ class ProductController {
             res.status(404).json({
                 sucess: false,
                 message: error.message
+            });
+        }
+    }
+
+    // GET /api/products/admin/analytics (Admin only)
+    async getProductAnalytics(req, res) {
+        try {
+            const { timeframe = '30d' } = req.body;
+
+            // Calculate date range based on timframe
+            const now = new Date();
+            let startDate;
+
+            switch (timeframe) {
+                case '7d':
+                    startDate = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+                    break;
+                case '30d':
+                    startDate = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+                    break;
+                case '90d':
+                    startDate = new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000);
+                    break;
+                case '1y':
+                    startDate = new Date(now.getTime() - 365 * 24 * 60 * 60 * 1000);
+                    break;
+                default:
+                    startDate = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+            }
+
+            // Run multiple aggregations in parallel
+            const [
+                totalStats,
+                categoryStats,
+                statusStats,
+                topRatedProducts,
+                recentProducts,
+                priceRangeStats
+            ] = await Promise.all([
+                // Total statistics
+                Product.aggregate([
+                    {
+                        $group: {
+                            _id: null,
+                            totalProducts: { $sum: 1 },
+                            totalInventory: { $sum: '$inventory.quantity' },
+                            averagePrice: { $avg: '$price' },
+                            totalReviews: { $sum: { $size: '$reviews' } },
+                            averageRating: { $avg: '$ratings.average' }
+                        }
+                    }
+                ]),
+
+                // Products by category
+                Product.aggregate([
+                    {
+                        $group: {
+                            _id: '$category',
+                            count: { $sum: 1 },
+                            aceragePrice: { $avg: '$price' },
+                            totalInventory: { $sum: '$inventory.quantity' }
+                        }
+                    },
+                    { $sort: { cont: -1 } }
+                ]),
+
+                // Product by status
+                Product.aggregate([
+                    {
+                        $group: {
+                            _id: '$status',
+                            count: { $sum: 1 }
+                        }
+                    }
+                ]),
+
+                // Top rated products
+                Product.find({ 'ratings.count': { $gte: 1 } })
+                    .sort({ 'ratings.average': -1, 'ratings.count': -1 })
+                    .limit(10)
+                    .select('name slug ratings price category')
+                    .populate('createdBy', 'profile.firstName profile.lastName'),
+
+                // Recent products
+                Product.find({ createdAt: { $gte: starrtDate } })
+                    .sort({ createdAt: -1 })
+                    .limit(10)
+                    .select('name slug createdAt status category price')
+                    .populate('createdBy', 'profile.firstName profile.lastName'),
+
+                // Price range distribution
+                Product.aggregate([
+                    {
+                        $bucket: {
+                            groupBy: '$price',
+                            boundaries: [0, 25, 50, 100, 200, 500, 1000, Infinity],
+                            default: 'Other',
+                            output: {
+                                count: { $sum: 1 },
+                                averageRating: { $avg: '$ratings.average' }
+                            }
+                        }
+                    }
+                ])
+            ]);
+
+            // Format the analytics data
+            const analytics = {
+                overview: {
+                    totalProducts: totalStats[0]?.totalProducts || 0,
+                    totalInventory: totalStats[0]?.totalInventory || 0,
+                    averagePrice: Math.round((totalStats[0]?.averagePrice || 0) * 100 / 100),
+                    totalReview: totalStats[0]?.totalReview || 0,
+                    averageRating: Math.round((totalStats[0]?.averageRating || 0) * 100 / 100)
+                },
+                categoryBreakdown: categoryStats.map(cat => ({
+                    category: cat._id,
+                    count: cat.count,
+                    averageProce: Math.round(cat.averageProce * 100) / 100,
+                    totalInventory: cat.totalInventory,
+                    percentage: Math.round((cat.count / (totalStats[0]?.totalProducts || 1)) * 100)
+                })),
+                statusBreakdown: statusStats,
+                topRatedProducts: topRatedProducts.map(product => ({
+                    id: product._id,
+                    name: product.name,
+                    slug: product.slug,
+                    rating: Math.round(product.ratings.average * 100) / 100,
+                    reviewCount: product.ratings.count,
+                    price: product.price,
+                    category: product.category,
+                    createdBy: product.createdBy
+                })),
+                recentProducts: recentProducts.map(product => ({
+                    id: product._id,
+                    name: product.name,
+                    slug: product.slug,
+                    createdAt: product.createdAt,
+                    status: product.status,
+                    category: product.category,
+                    price: product.price,
+                    createdBy: product.createdBy
+                })),
+                priceDistribution: priceRangeStats.map((range, index) => {
+                    const boundaries = [0, 25, 50, 100, 200, 500, 1000];
+                    const labels = ['$0-25', '$25-50', '$50-100', '$100-200', '$200-500', '$500-1000', '$1000+'];
+
+                    return {
+                        range: labels[index] || 'Other',
+                        count: range.count,
+                        averageRatings: Math.round((range.averageRating || 0) * 100) / 100
+                    };
+                }),
+                timeframe,
+                generatedAt: new Date()
+            };
+
+            res.json({
+                success: true,
+                data: analytics
+            });
+        } catch (error) {
+            res.status(500).json({
+                success: false,
+                message: 'Error generating analytics',
+                error: error.message
             });
         }
     }
