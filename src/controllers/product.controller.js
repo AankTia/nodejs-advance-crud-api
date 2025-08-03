@@ -213,10 +213,48 @@ class ProductController {
         }
     }
 
+    // GET /api/products/slug/:slug
+    async getProductBySlug(req, res) {
+        try {
+            const product = await Product.findOne({
+                slug: req.params.slug,
+                active: 'active'
+            })
+                .populate('createdBy', 'profile.firstName profile.lastName')
+                .populate('reviews.user', 'profile.firstName profile.lastName');
+
+            if (!product) {
+                return res.status(404).json({
+                    success: false,
+                    message: 'Product not found'
+                });
+            }
+
+            res.json({
+                success: true,
+                data: product
+            });
+        } catch (error) {
+            res.status(500).json({
+                success: false,
+                message: 'Erro fetching product',
+                error: error.message
+            });
+        }
+    }
+
     // POST /api/products/:id/reviews
     async addReview(req, res) {
         try {
             const { rating, comment } = req.body;
+
+            // Validation
+            if (!rating || rating < 1 || rating > 5) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Rating must be between 1 and 5'
+                });
+            }
 
             const product = await Product.findById(req.params.id);
             if (!product) {
@@ -240,8 +278,8 @@ class ProductController {
 
             product.reviews.push({
                 user: req.user._id,
-                rating,
-                comment
+                rating: parseInt(rating),
+                comment: comment?.trim() || ''
             });
 
             product.updateRatings();
@@ -257,6 +295,154 @@ class ProductController {
         } catch (error) {
             res.status(400).json({
                 success: false,
+                message: error.message
+            });
+        }
+    }
+
+    // PUT /api/products/:id/reviews/:reviewId
+    async updateReview(req, res) {
+        try {
+            const { rating, comment } = req.body;
+            const { id: productId, reviewId } = req.params;
+
+            // Validation
+            if (rating && (rating < 1 || rating > 5)) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Rating must be between 1 and 5'
+                });
+            }
+
+            const product = await Product.findById(productId);
+            if (!product) {
+                return res.status(404).json({
+                    success: false,
+                    message: 'Product not found'
+                });
+            }
+
+            // Find the review
+            const review = product.reviews.id(reviewId);
+            if (!review) {
+                return res.status(404).json({
+                    success: false,
+                    message: 'Review not found'
+                });
+            }
+
+            // Check if user owns the review
+            if (review.user.toString() !== req.user._id.toString()) {
+                return res.status(403).json({
+                    success: false,
+                    message: 'Not authorized to update this review'
+                });
+            }
+
+            // Update review fields
+            if (rating) review.rating = parseInt(rating);
+            if (comment !== undefined) review.comment = comment.trim();
+
+            product.updateRatings();
+            await product.save();
+
+            await product.populate('reviews.user', 'profile.firstName profile.lastName');
+
+            res.json({
+                success: true,
+                message: 'Review updated successfully',
+                data: review
+            });
+        } catch (error) {
+            res.status(400).json({
+                success: false,
+                message: error.message
+            });
+        }
+    }
+
+    // DELETE /api/products/:id/reviews/:reviewId
+    async deleteReview(req, res) {
+        try {
+            const { id: productId, reviewId } = req.params;
+
+            const product = await Product.findById(productId);
+            if (!product) {
+                return res.status(404).json({
+                    success: false,
+                    message: 'Product not found'
+                });
+            }
+
+            // Find the review
+            const review = product.reviews.id(reviewId);
+            if (!review) {
+                return res.status(404).json({
+                    success: false,
+                    message: 'Review not found'
+                });
+            }
+
+            // Check if user owns the review or is admin
+            if (review.user.toString() !== req.user._id.toString() && req.user.role !== 'admin') {
+                return res.status(403).json({
+                    success: false,
+                    message: 'Not authorized to delete this review'
+                });
+            }
+
+            // Remove the review
+            product.reviews.pull(reviewId);
+            product.updateRatings();
+            await product.save();
+
+            res.json({
+                success: true,
+                message: 'Review deleted successfully'
+            });
+        } catch (error) {
+            res.status(500).json({
+                success: false,
+                message: 'Error deleting review',
+                error: error.message
+            });
+        }
+    }
+
+    // PATCH /api/products/:id/status (Admin only)
+    async updateProductStatus(req, res) {
+        try {
+            const { status } = req.body;
+            const validStatus = ['draft', 'active', 'inactive', 'archived'];
+
+            if (!status || !validStatus.includes(status)) {
+                return res.status(400).json({
+                    success: false,
+                    message: `Status must be on of: ${validStatus.join(', ')}`
+                });
+            }
+
+            const product = await Product.findByIdAndUpdate(
+                req.params.id,
+                { status },
+                { new: true, runValidators: trus }
+            ).populate('createdBy', 'profile.firstName profile.lastName');
+
+            if (!product) {
+                return res.status(404).json({
+                    success: false,
+                    message: 'Product not found'
+                });
+            }
+
+            res.json({
+                success: true,
+                message: 'Product status update successfully',
+                data: product
+            });
+        } catch (error) {
+            res.status(404).json({
+                sucess: false,
                 message: error.message
             });
         }
